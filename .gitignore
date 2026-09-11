@@ -1,0 +1,10 @@
+.venv/
+models/
+audio/
+data/
+outputs/
+*.log
+.DS_Store
+__pycache__/
+.pycache/
+cookies.txt
