@@ -10,6 +10,20 @@ ENRICHED = PIPE / "data" / "enriched.json"
 CLEANED = PIPE / "data" / "cleaned_tree.json"
 ROWS = json.loads((ENRICHED if ENRICHED.exists() else CLEANED).read_text(encoding="utf-8"))
 TRANS_DIR = PIPE / "data" / "transcripts"
+FAV = PIPE / "data" / "favorites.jsonl"
+fav_meta = {}
+if FAV.exists():
+    for pos, line in enumerate(FAV.read_text(encoding="utf-8").splitlines(), 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            fr = json.loads(line)
+        except Exception:
+            continue
+        fid = fr.get("id")
+        if fid and fid not in fav_meta:
+            fav_meta[fid] = {"rank": pos, "at": (fr.get("found_at") or "")[:10]}
 
 def fmt_ts(sec):
     if sec is None:
@@ -46,6 +60,8 @@ for r in ROWS:
         "l1": (r.get("path") or ["其他"])[0],
         "note": r.get("note", ""),
         "segments": (tr or {}).get("segments") or [],
+        "rank": fav_meta.get(vid, {}).get("rank"),
+        "fav_at": fav_meta.get(vid, {}).get("at", ""),
     })
 
 OUT.mkdir(parents=True, exist_ok=True)
@@ -136,7 +152,7 @@ mark{background:#ffe58f;padding:0 1px}
 </style></head><body>
 <header>
   <h1>抖音收藏 · 视频文案库</h1>
-  <div class="stats">共 <b>__TOTAL__</b> 条 ｜ 已转写 <b>__OK__</b> ｜ 无人声 <b>__EMPTY__</b> ｜ 超长跳过 <b>__LONG__</b> ｜ 待处理 <b>__MISSING__</b> ｜ 生成于 __BUILT__</div>
+  <div class="stats">共 <b>__TOTAL__</b> 条 ｜ 已转写 <b>__OK__</b> ｜ 无人声 <b>__EMPTY__</b> ｜ 超长跳过 <b>__LONG__</b> ｜ 待处理 <b>__MISSING__</b> ｜ 生成于 __BUILT__ ｜ 序号 = 收藏顺序，#1 为最近收藏</div>
   <div class="controls">
     <input type="search" id="q" placeholder="搜索标题 / 关键词 / 文案内容，例如：提示词缓存 / 收纳 / DeepSeek">
     <select id="cat"><option value="">全部分类</option>__CATS__</select>
@@ -147,6 +163,11 @@ mark{background:#ffe58f;padding:0 1px}
       <option value="empty">无人声</option>
       <option value="too_long">超长跳过</option>
       <option value="missing">待处理</option>
+    </select>
+    <select id="sort">
+      <option value="new">收藏顺序：新 → 旧</option>
+      <option value="old">收藏顺序：旧 → 新</option>
+      <option value="chars">文案字数：多 → 少</option>
     </select>
     <button class="btn" id="expand">展开全部</button>
   </div>
@@ -159,6 +180,7 @@ const q = document.getElementById('q');
 const catSel = document.getElementById('cat');
 const stSel = document.getElementById('st');
 const formSel = document.getElementById('form');
+const sortSel = document.getElementById('sort');
 let expanded = false;
 
 function esc(s){return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
@@ -174,7 +196,12 @@ function render(){
   const cat = catSel.value, st = stSel.value, fm = formSel.value;
   const kwl = kw.toLowerCase();
   let html = '', n = 0;
-  DATA.forEach((it, i) => {
+  const sv = sortSel.value;
+  let arr = DATA.map((it, i) => ({it: it, i: i}));
+  if(sv === 'old') arr.sort((a, b) => (b.it.rank || 9e9) - (a.it.rank || 9e9));
+  else if(sv === 'chars') arr.sort((a, b) => (b.it.chars || 0) - (a.it.chars || 0));
+  else arr.sort((a, b) => (a.it.rank || 9e9) - (b.it.rank || 9e9));
+  arr.forEach(({it, i}) => {
     if(cat && !it.cat.startsWith(cat)) return;
     if(st && it.status !== st) return;
     if(fm && it.form !== fm) return;
@@ -207,10 +234,11 @@ function render(){
         + '</div><div class="segbox" id="seg'+i+'" style="display:none"></div>';
     }
     html += '<div class="card'+(expanded?' open':'')+'" data-i="'+i+'">'
-      + '<div class="card-head"><div class="idx">'+(i+1)+'</div><div class="head-main">'
+      + '<div class="card-head"><div class="idx">'+(it.rank || (i+1))+'</div><div class="head-main">'
       + '<div class="title">'+hl(it.title||'(无标题)',kw)+'</div>'
       + '<div class="meta">'+(it.cat?'<span class="cat">'+esc(it.cat)+'</span>':'')
       + (it.form?'<span class="form">'+esc(it.form)+'</span>':'')
+      + (it.fav_at?'<span>收录 '+it.fav_at+'</span>':'')
       + (it.duration?'<span>'+fmt(it.duration)+'</span>':'')
       + (it.chars?'<span>'+it.chars+'字</span>':'')+badge+'</div>'
       + (it.keywords&&it.keywords.length?'<div class="kw">'+it.keywords.map(k=>'<span>'+esc(k)+'</span>').join('')+'</div>':'')
@@ -246,6 +274,7 @@ document.getElementById('expand').addEventListener('click', ()=>{
 });
 let timer; q.addEventListener('input', ()=>{clearTimeout(timer); timer=setTimeout(render,180)});
 catSel.addEventListener('change', render); stSel.addEventListener('change', render);
+sortSel.addEventListener('change', render);
 formSel.addEventListener('change', render);
 render();
 </script></body></html>"""

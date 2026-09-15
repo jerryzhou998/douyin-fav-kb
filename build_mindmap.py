@@ -63,6 +63,7 @@ def build_tree(rows):
                 "d": it.get("duration"),
                 "c": it.get("chars") or 0,
                 "s": it.get("status", ""),
+                "r": it.get("_rank"),
                 "x": (it.get("transcript") or "")[:180],
             } for it in items],
         }
@@ -182,6 +183,7 @@ function card(o,q){
   d.innerHTML='<div class="ct">'+hl(it.t,q)+'</div>'
     +'<div class="cm">'+(it.f?'<span class="tag" style="background:'+fc+'">'+esc(it.f)+'</span>':'')
     +(o.path?'<span class="path">'+esc(o.path.join(' › '))+'</span>':'')
+    +(it.r?'<span title="收藏顺序，#1 为最近收藏">收藏#'+it.r+'</span>':'')
     +(it.d?'<span>'+fmt(it.d)+'</span>':'')+(it.c?'<span>'+it.c+'字</span>':'')
     +(it.k||[]).map(k=>'<span class="kw">'+esc(k)+'</span>').join('')+'</div>'
     +(it.x?'<div class="ex">'+hl(it.x,q)+'</div>':'');
@@ -210,6 +212,7 @@ function renderPanel(){
       +'想搭知识库 → <b>大模型原理与自建 › RAG 与知识库</b>。<br><br>'
       +'<b>形态筛选：</b>右上角可只看「保姆级教程」或「避坑经验」。<br>'
       +'<b>搜索：</b>支持标题、术语和文案内容。<br><br>'
+      +'卡片上的 <b>收藏#N</b> 是收藏顺序，#1 为最近收藏；<b>收藏文案.html</b> 里可按收藏新旧排序。<br>'
       +'点任意卡片在抖音打开原视频；完整文案见 <b>收藏文案.html</b>。</div>';
     return;
   }
@@ -234,6 +237,21 @@ def main():
     args = ap.parse_args()
 
     rows = json.loads(Path(args.inp).read_text(encoding="utf-8"))
+    fav = DATA / "favorites.jsonl"
+    rank = {}
+    if fav.exists():
+        for pos, line in enumerate(fav.read_text(encoding="utf-8").splitlines(), 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                fr = json.loads(line)
+            except Exception:
+                continue
+            if fr.get("id") and fr["id"] not in rank:
+                rank[fr["id"]] = pos
+    for r in rows:
+        r["_rank"] = rank.get(r.get("id"))
     tree = build_tree(rows)
     forms = sorted({r.get("form") for r in rows if r.get("form")})
 
