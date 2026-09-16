@@ -37,6 +37,28 @@ FORM_COLORS = {
 }
 
 
+def load_fav_meta(path):
+    """从 favorites.jsonl 计算收藏顺序。
+
+    抖音收藏页按收藏时间倒序（最新在前），抓取时自上而下写入文件；
+    增量补抓时新收藏出现在页面顶部，但追加在文件末尾。
+    因此真实顺序 = 抓取日期倒序（新批次在前），同批次内保持文件顺序。
+    """
+    rows = []
+    if path.exists():
+        for pos, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                fr = json.loads(line)
+            except Exception:
+                continue
+            if fr.get("id"):
+                rows.append((fr["id"], (fr.get("found_at") or "")[:10], pos))
+    rows.sort(key=lambda x: (-int(x[1].replace("-", "") or 0), x[2]))
+    return {fid: {"rank": i, "at": day} for i, (fid, day, _) in enumerate(rows, 1)}
+
 def build_tree(rows):
     root = {}
     for r in rows:
@@ -116,6 +138,8 @@ mark{background:#ffe58f;padding:0 1px;border-radius:2px}
 .hint{color:#65676b;font-size:13px;background:#fff;border:1px solid #e3e5e8;
       border-radius:9px;padding:14px 16px;line-height:1.8}
 .hint b{color:#1c1e21}
+.more{display:block;width:100%;margin:8px 0 24px;padding:10px;border:1px solid #ccd0d5;background:#fff;border-radius:9px;font-size:13px;cursor:pointer;color:#1877f2}
+.more:hover{background:#f0f6ff;border-color:#1877f2}
 @media(max-width:820px){main{flex-direction:column}
   .left{width:100%;min-width:0;max-height:40vh;border-right:none;border-bottom:1px solid #e3e5e8}}
 </style></head><body>
@@ -132,10 +156,11 @@ mark{background:#ffe58f;padding:0 1px;border-radius:2px}
 </main>
 <script>
 const DATA = __DATA__;
+const ALL = __ALL__;
 const FORM_COLORS = __FORMCOLORS__;
 const COLORS = __COLORS__;
 const TOTAL = DATA.reduce((a,c)=>a+c.count,0);
-let open1={}, open2={}, sel=null;
+let open1={}, open2={}, sel=null, shownAll=10;
 
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 function hl(s,q){ if(!q) return esc(s); const t=String(s||''); const i=t.toLowerCase().indexOf(q.toLowerCase());
@@ -205,15 +230,26 @@ function renderPanel(){
     list=collect(sel.node).map(o=>({it:o.it, path:sel.path.slice(1).concat(o.path.slice(1))}));
     title=sel.path.join(' › ');
   } else {
-    document.getElementById('stat').textContent='共 '+TOTAL+' 条';
-    p.innerHTML='<div class="hint">👈 左侧点开任意分类查看内容。<br><br>'
-      +'<b>怎么用：</b>这份脑图按「<b>我遇到什么问题</b>」组织，而不是按话题。<br>'
-      +'比如想给 AI 加能力 → <b>AI 编程与智能体 › 能力扩展 › Skills 技能</b>；<br>'
-      +'想搭知识库 → <b>大模型原理与自建 › RAG 与知识库</b>。<br><br>'
-      +'<b>形态筛选：</b>右上角可只看「保姆级教程」或「避坑经验」。<br>'
-      +'<b>搜索：</b>支持标题、术语和文案内容。<br><br>'
-      +'卡片上的 <b>收藏#N</b> 是收藏顺序，#1 为最近收藏；<b>收藏文案.html</b> 里可按收藏新旧排序。<br>'
+    let list = ALL.map(it=>({it: it, path: null}));
+    if(fm) list = list.filter(o=>o.it.f===fm);
+    const shown = Math.min(shownAll, list.length);
+    document.getElementById('stat').textContent='最新收藏 '+shown+' / '+list.length+' 条';
+    p.innerHTML='<div class="hint">👈 左侧点开任意分类查看内容；或先看看下面的 <b>最新收藏</b>。<br>'
+      +'<b>怎么用：</b>这份脑图按「<b>我遇到什么问题</b>」组织，而不是按话题。'
+      +'比如想给 AI 加能力 → <b>AI 编程与智能体 › 能力扩展 › Skills 技能</b>；'
+      +'想搭知识库 → <b>大模型原理与自建 › RAG 与知识库</b>。<br>'
+      +'<b>形态筛选/搜索：</b>右上角可只看「保姆级教程」「避坑经验」，支持搜标题、术语和文案内容。<br>'
       +'点任意卡片在抖音打开原视频；完整文案见 <b>收藏文案.html</b>。</div>';
+    const c=document.createElement('div'); c.className='crumb';
+    c.innerHTML='<b>最新收藏</b> · 显示前 '+shown+' 条（按收藏时间，新 → 旧）';
+    p.appendChild(c);
+    list.slice(0, shown).forEach(o=>p.appendChild(card(o,'')));
+    if(list.length > shown){
+      const btn=document.createElement('button'); btn.className='more';
+      btn.textContent='加载更多（还有 '+(list.length-shown)+' 条）';
+      btn.onclick=()=>{shownAll+=10; renderPanel();};
+      p.appendChild(btn);
+    }
     return;
   }
   if(fm) list=list.filter(o=>o.it.f===fm);
@@ -237,26 +273,28 @@ def main():
     args = ap.parse_args()
 
     rows = json.loads(Path(args.inp).read_text(encoding="utf-8"))
-    fav = DATA / "favorites.jsonl"
-    rank = {}
-    if fav.exists():
-        for pos, line in enumerate(fav.read_text(encoding="utf-8").splitlines(), 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                fr = json.loads(line)
-            except Exception:
-                continue
-            if fr.get("id") and fr["id"] not in rank:
-                rank[fr["id"]] = pos
+    rank = load_fav_meta(DATA / "favorites.jsonl")
     for r in rows:
-        r["_rank"] = rank.get(r.get("id"))
+        r["_rank"] = rank.get(r.get("id"), {}).get("rank")
     tree = build_tree(rows)
+    all_items = sorted(
+        ({
+            "t": r.get("title", "")[:90],
+            "u": r.get("url", ""),
+            "f": r.get("form", ""),
+            "k": (r.get("terms") or [])[:6],
+            "d": r.get("duration"),
+            "c": r.get("chars") or 0,
+            "s": r.get("status", ""),
+            "x": (r.get("transcript") or "")[:180],
+            "r": r.get("_rank"),
+        } for r in rows),
+        key=lambda x: (x["r"] is None, x["r"] or 0))
     forms = sorted({r.get("form") for r in rows if r.get("form")})
 
     doc = (TEMPLATE
            .replace("__DATA__", json.dumps(tree, ensure_ascii=False))
+           .replace("__ALL__", json.dumps(all_items, ensure_ascii=False))
            .replace("__FORMCOLORS__", json.dumps(FORM_COLORS, ensure_ascii=False))
            .replace("__COLORS__", json.dumps(COLORS, ensure_ascii=False))
            .replace("__FORMS__", "".join(

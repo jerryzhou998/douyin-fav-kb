@@ -11,19 +11,28 @@ CLEANED = PIPE / "data" / "cleaned_tree.json"
 ROWS = json.loads((ENRICHED if ENRICHED.exists() else CLEANED).read_text(encoding="utf-8"))
 TRANS_DIR = PIPE / "data" / "transcripts"
 FAV = PIPE / "data" / "favorites.jsonl"
-fav_meta = {}
-if FAV.exists():
-    for pos, line in enumerate(FAV.read_text(encoding="utf-8").splitlines(), 1):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            fr = json.loads(line)
-        except Exception:
-            continue
-        fid = fr.get("id")
-        if fid and fid not in fav_meta:
-            fav_meta[fid] = {"rank": pos, "at": (fr.get("found_at") or "")[:10]}
+def load_fav_meta(path):
+    """从 favorites.jsonl 计算收藏顺序。
+
+    抖音收藏页按收藏时间倒序（最新在前），抓取时自上而下写入文件；
+    增量补抓时新收藏出现在页面顶部，但追加在文件末尾。
+    因此真实顺序 = 抓取日期倒序（新批次在前），同批次内保持文件顺序。
+    """
+    rows = []
+    if path.exists():
+        for pos, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                fr = json.loads(line)
+            except Exception:
+                continue
+            if fr.get("id"):
+                rows.append((fr["id"], (fr.get("found_at") or "")[:10], pos))
+    rows.sort(key=lambda x: (-int(x[1].replace("-", "") or 0), x[2]))
+    return {fid: {"rank": i, "at": day} for i, (fid, day, _) in enumerate(rows, 1)}
+fav_meta = load_fav_meta(FAV)
 
 def fmt_ts(sec):
     if sec is None:

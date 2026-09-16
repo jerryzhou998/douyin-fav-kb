@@ -5,6 +5,11 @@ export PYTHONUTF8=1
 export PYTHONPATH="$(pwd)"
 PY="$(pwd)/.venv/bin/python"
 MAXMIN="${MAXMIN:-40}"
+if [ ! -x "$PY" ]; then
+  echo "[$(date '+%F %T')] ❌ 缺少运行环境，请先双击【0-一键安装.command】。已中止。"
+  exit 1
+fi
+
 
 echo "[$(date '+%F %T')] ===== 第 2 步开始（后台） ====="
 

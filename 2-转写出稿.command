@@ -2,6 +2,17 @@
 # 第二步：后台转写 + 出稿。启动后可直接关窗口，不用守着。
 cd "$(dirname "$0")"
 LOG="$(pwd)/step2.log"
+# 环境自检：缺 .venv 时给出明确指引，避免 zsh 直接报 127
+if [ ! -x "$(pwd)/.venv/bin/python" ]; then
+  echo ""
+  echo "❌ 还没安装运行环境（缺少 .venv）。"
+  echo "   请先双击本文件夹里的【0-一键安装.command】，"
+  echo "   等它安装完成后，再运行本脚本。"
+  echo ""
+  read -k1 -r "?按任意键关闭... "
+  exit 1
+fi
+
 MAXMIN=40
 
 # 防止重复启动
