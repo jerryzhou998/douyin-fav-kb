@@ -95,7 +95,9 @@ cd douyin-fav-kb
 > 抖音登录有风控，这一步无法自动化。这个 Chrome 用独立配置，不影响你日常浏览器。
 
 > [!TIP]
-> **第 2 步启动后转入后台**，可以直接关掉窗口。想看进度：`tail -f step2.log`
+> **第 2 步会自动打开同一个专用 Chrome**（复用第 1 步的登录态），无需手动开浏览器；
+> 如果打开的是登录页，登录后重新运行即可。启动后转入后台，可以直接关掉终端窗口。
+> 想看进度：`tail -f step2.log`
 
 ### 日常增量更新
 
@@ -104,6 +106,23 @@ cd douyin-fav-kb
 - 抓取时**连续遇到 40 条已抓过的就自动停**
 - 转写时已完成的直接跳过
 - 新收藏 20 条，约 20 分钟更新完
+
+### 同步到 Obsidian（可选）
+
+两个步骤结束后都会自动运行 `export_obsidian.py`，生成一个 Obsidian 仓库：
+
+```
+outputs/抖音收藏库-Obsidian/
+├── 首页.md                    总览 + 最新 30 条收藏
+├── 分类/                      每个一级分类一篇 MOC 导航
+└── 视频/<分类>/<标题-抖音ID>.md 每个视频一篇笔记（属性 + 全文文案）
+```
+
+在 Obsidian 里 **Open folder as vault（打开本地仓库）**，选中该文件夹即可。
+
+- 笔记带完整 YAML 属性（分类 / 形态 / 关键词 / 时长 / 收藏序号 / 状态），可在搜索框按 `标签:#douyin/已转写` 等过滤
+- 增量更新：内容没变的笔记不重写，失效视频自动清理，改分类自动搬迁
+- 想放到别的位置：`python export_obsidian.py --vault /你的/仓库路径`（或设置环境变量 `DOUYIN_OBSIDIAN_VAULT`）
 
 ---
 
@@ -167,6 +186,7 @@ douyin-fav-kb/
 ├── enrich_classify.py          用文案重新分类、抽术语、判形态
 ├── build_transcript_view.py    生成文案库
 ├── build_mindmap.py            生成需求脑图
+├── export_obsidian.py       导出 Obsidian 仓库（自动增量同步）
 └── docs/
     ├── 技术教程.md             实现原理 + 踩坑记录
     └── 小白教程.md             让 Codex 帮你搭

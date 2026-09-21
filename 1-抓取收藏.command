@@ -40,11 +40,16 @@ if [ $rc -ne 0 ]; then
 fi
 
 echo ""
-echo "──────── 清洗、去重、分类、生成脑图 ────────"
+echo "──────── 清洗、去重、分类 ────────"
 "$PY" build_km3.py --in "$(pwd)/data/favorites.jsonl" \
-  --out "$(pwd)/outputs/收藏脑图.html" \
+  --out "" \
   --csv "$(pwd)/data/cleaned_tree.csv" \
   --json "$(pwd)/data/cleaned_tree.json"
+"$PY" enrich_classify.py
+echo "──────── 生成新版脑图与文案库 ────────"
+"$PY" build_transcript_view.py
+"$PY" build_mindmap.py
+"$PY" export_obsidian.py
 
 echo ""
 echo "════════════════════════════════════════════════════"

@@ -3,7 +3,7 @@
 """完整流程：下载全部音频 + AI 语音转文字（断点续跑）
 用法: python transcribe_pipeline.py [--limit N] [--ids ...] [--model small]
 运行说明：
-  - 请先保持专用 Chrome 开着并已登录抖音（用于导出下载凭证）
+  - 运行时会自动打开专用 Chrome（与抓取共用同一资料夹），无需手动启动浏览器
   - 每个 mp3 只在缺的时候下载；每个视频只在未转好时转写
   - 中途随时 Ctrl+C，下次再跑会接着来，不重复
 """
@@ -19,7 +19,6 @@ AUDIO_DIR = PIPE_DIR / "audio"
 TRANS_DIR = PIPE_DIR / "data" / "transcripts"
 COOKIE_FILE = PIPE_DIR / "cookies.txt"
 LOG_FILE = PIPE_DIR / "transcribe.log"
-CDP = "http://127.0.0.1:9222"
 YDL = PIPE_DIR / ".venv/bin/yt-dlp"
 PROFILE = os.path.expanduser("~/.codex-douyin-profile")
 
@@ -52,22 +51,32 @@ def douyin_unavailable_reason(vid):
     return f"作品不可获取：{err}" if err else None
 
 
-def download_audio(ctx, page, r):
+def download_audio(ctx, page, r, alive=None):
     vid = r["id"]; url = r["url"]
     out = AUDIO_DIR / f"{vid}.mp3"
     if out.exists() and out.stat().st_size > 1000:
         return {"status": "exists", "path": out}
+    if alive is not None and not alive():
+        return {"status": "browser_closed"}
     try:
-        page.goto(url, wait_until="domcontentloaded")
+        page.goto(url, wait_until="domcontentloaded", timeout=20000)
         page.wait_for_timeout(2000)
     except Exception:
         pass
+    if alive is not None and not alive():
+        return {"status": "browser_closed"}
     cmd = [str(YDL), "--cookies", str(COOKIE_FILE),
            "-f", "bestaudio/best", "-x", "--audio-format", "mp3",
            "-o", str(AUDIO_DIR / f"{vid}.%(ext)s"), url]
     try:
-        rp = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
-    except subprocess.TimeoutExpired:
+        rp = subprocess.run(cmd, capture_output=True, text=True, timeout=240,
+                            start_new_session=True)
+    except subprocess.TimeoutExpired as e:
+        # TimeoutExpired 默认只杀 yt-dlp 本身，ffmpeg 子进程会成孤儿
+        try:
+            os.killpg(os.getpgid(e.pid), 9)
+        except Exception:
+            pass
         return {"status": "timeout"}
     if out.exists() and out.stat().st_size > 1000:
         return {"status": "ok", "path": out, "mb": round(out.stat().st_size/1024/1024, 1)}
@@ -99,6 +108,8 @@ def main():
                     help="超过该时长(分钟)的超长视频直接跳过；0 表示不限制")
     ap.add_argument("--retry-dead", action="store_true",
                     help="重新尝试之前标记为失效的作品")
+    ap.add_argument("--profile", default=PROFILE,
+                    help="专用 Chrome 资料夹（与抓取脚本共用）")
     args = ap.parse_args()
 
     AUDIO_DIR.mkdir(parents=True, exist_ok=True)
@@ -116,14 +127,34 @@ def main():
 
     log(f"本次待处理 {len(rows)} 条 | 模型 {args.model}")
 
-    # 连接 Chrome 导出 cookie
+    # 自动启动专用 Chrome（与抓取脚本共用同一资料夹/登录态），导出 cookie
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
-        browser = p.chromium.connect_over_cdp(CDP)
-        ctx = browser.contexts[0]
-        n = write_cookies(ctx)
-        log(f"已导出登录凭证 {n} 条")
+        log("启动专用 Chrome…（若打开的是登录页，请先登录抖音后重新运行本步骤）")
+        ctx = p.chromium.launch_persistent_context(
+            user_data_dir=args.profile, channel="chrome", headless=False,
+            viewport={"width": 1280, "height": 860},
+            ignore_default_args=["--enable-automation"])
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        try:
+            page.goto("https://www.douyin.com", wait_until="domcontentloaded", timeout=25000)
+            page.wait_for_timeout(2500)
+        except Exception:
+            pass
+        n = write_cookies(ctx)
+        if n < 5:
+            log("✗ 未获取到抖音登录态。请在弹出的 Chrome 里登录抖音，然后重新运行本步骤。")
+            ctx.close()
+            return 1
+        log(f"已导出登录凭证 {n} 条（转写期间请保留这个 Chrome 窗口，关掉会中止任务）")
+
+        browser_gone = {"v": False}
+        def _mark_gone(*_):
+            browser_gone["v"] = True
+        ctx.on("close", _mark_gone)
+        page.on("close", _mark_gone)
+        def alive():
+            return not browser_gone["v"]
 
         # 加载/首次下载模型
         log("加载语音模型（优先用本地目录，缺失才会下载，国内会走镜像）…")
@@ -142,6 +173,9 @@ def main():
         skipped_dead = skipped_long = newly_dead = 0
         state = load_state()
         for i, r in enumerate(rows, 1):
+            if not alive():
+                log("✗ 专用 Chrome 已被关闭，任务中止（已转内容不丢失，重开 Chrome 后重新运行可断点续跑）")
+                return 2
             vid = r["id"]
             out_json = TRANS_DIR / f"{vid}.json"
             if out_json.exists():
@@ -175,12 +209,18 @@ def main():
                     log(f"[{i}/{total}] ⏭ {vid} 超长视频 {mins} 分钟 > {args.max_minutes} 分钟，跳过")
                     continue
             # 1) 下载音频（若已下载则直接用）
-            d = download_audio(ctx, page, r)
+            if not alive():
+                log("✗ 专用 Chrome 已被关闭，任务中止（已转内容不丢失，重开 Chrome 后重新运行可断点续跑）")
+                return 2
+            d = download_audio(ctx, page, r, alive)
             mp3 = AUDIO_DIR / f"{vid}.mp3"
             if d.get("status") in ("ok", "exists") and mp3.exists():
                 pass
             else:
                 err = d.get("err", "")
+                if d.get("status") == "browser_closed":
+                    log("✗ 专用 Chrome 已被关闭，任务中止（已转内容不丢失，重开 Chrome 后重新运行可断点续跑）")
+                    return 2
                 if "作品不可获取" in str(err):
                     state["dead"][vid] = {"reason": str(err), "title": r.get("title", "")[:60],
                                           "at": datetime.datetime.now().isoformat(timespec="seconds")}

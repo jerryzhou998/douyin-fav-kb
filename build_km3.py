@@ -356,9 +356,10 @@ def main():
         for r in records:
             w.writerow([r["id"], *r["path"], r["title"], r["author"], r["tags"], r["url"], r["text"]])
 
-    html = TEMPLATE.replace("__DATA__", json.dumps(tree, ensure_ascii=False))
-    out = Path(args.out); out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(html, encoding="utf-8")
+    if args.out:
+        html = TEMPLATE.replace("__DATA__", json.dumps(tree, ensure_ascii=False))
+        out = Path(args.out); out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(html, encoding="utf-8")
 
     from collections import Counter
     c1 = Counter(r["path"][0] for r in records)
@@ -366,7 +367,8 @@ def main():
     print("一级分类:")
     for k, v in c1.most_common():
         print(f"  {k}: {v}")
-    print("脑图文件:", out.resolve())
+    if args.out:
+        print("脑图文件:", out.resolve())
     return 0
 
 if __name__ == "__main__":
